@@ -277,7 +277,6 @@ func (c *Config) DefaultEchoConfigs(t resource.Context) []echo.Config {
 		ServiceAccount:  true,
 		Ports:           ports.All(),
 		DeployAsVM:      true,
-		AutoRegisterVM:  true,
 		Subsets:         []echo.SubsetConfig{{}},
 		IncludeExtAuthz: c.IncludeExtAuthz,
 	}

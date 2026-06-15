@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"istio.io/istio/pkg/ptr"
 
 	"istio.io/istio/pkg/test/framework/components/namespace"
 )
@@ -39,5 +40,50 @@ func TestParseConfigs(t *testing.T) {
 		VMDistro:   "Centos8",
 	}}); diff != "" {
 		t.Fatal(diff)
+	}
+}
+
+func TestIsAutoRegisterVM(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  Config
+		want bool
+	}{
+		{
+			name: "not a VM",
+			cfg:  Config{},
+			want: false,
+		},
+		{
+			name: "VM defaults to auto-register",
+			cfg: Config{
+				DeployAsVM: true,
+			},
+			want: true,
+		},
+		{
+			name: "VM explicit auto-register true",
+			cfg: Config{
+				DeployAsVM:     true,
+				AutoRegisterVM: ptr.Of(true),
+			},
+			want: true,
+		},
+		{
+			name: "VM explicit auto-register false",
+			cfg: Config{
+				DeployAsVM:     true,
+				AutoRegisterVM: ptr.Of(false),
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.cfg.IsAutoRegisterVM(); got != tt.want {
+				t.Fatalf("IsAutoRegisterVM() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

@@ -27,6 +27,7 @@ import (
 	"istio.io/api/label"
 	"istio.io/istio/pkg/config/constants"
 	"istio.io/istio/pkg/config/protocol"
+	"istio.io/istio/pkg/ptr"
 	"istio.io/istio/pkg/test/echo/common"
 	"istio.io/istio/pkg/test/framework/components/cluster"
 	"istio.io/istio/pkg/test/framework/components/namespace"
@@ -157,7 +158,8 @@ type Config struct {
 	DeployAsVM bool
 
 	// If enabled, ISTIO_META_AUTO_REGISTER_GROUP will be set on the VM and the WorkloadEntry will be created automatically.
-	AutoRegisterVM bool
+	// If unset and DeployAsVM=true, this defaults to true.
+	AutoRegisterVM *bool
 
 	// The distro to use for a VM. For fake VMs, this maps to docker images.
 	VMDistro VMDistro
@@ -383,6 +385,10 @@ func (c Config) IsAmbient() bool {
 
 func (c Config) IsVM() bool {
 	return c.DeployAsVM
+}
+
+func (c Config) IsAutoRegisterVM() bool {
+	return c.DeployAsVM && ptr.OrDefault(c.AutoRegisterVM, true)
 }
 
 func (c Config) IsSotw() bool {

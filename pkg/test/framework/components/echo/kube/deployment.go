@@ -115,7 +115,7 @@ func newDeployment(ctx resource.Context, cfg echo.Config) (*deployment, error) {
 	return &deployment{
 		ctx:             ctx,
 		cfg:             cfg,
-		shouldCreateWLE: cfg.DeployAsVM && !cfg.AutoRegisterVM,
+		shouldCreateWLE: cfg.DeployAsVM && !cfg.IsAutoRegisterVM(),
 	}, nil
 }
 
@@ -533,7 +533,7 @@ spec:
 	})
 
 	// Push the WorkloadGroup for auto-registration
-	if cfg.AutoRegisterVM {
+	if cfg.IsAutoRegisterVM() {
 		if err := ctx.ConfigKube(cfg.Cluster).
 			YAML(cfg.Namespace.Name(), wg).
 			Apply(apply.NoCleanup); err != nil {
@@ -578,7 +578,7 @@ spec:
 			// When VMs talk about "cluster", they refer to the cluster they connect to for discovery
 			cmd = append(cmd, "--clusterID", cfg.Cluster.Name())
 		}
-		if cfg.AutoRegisterVM {
+		if cfg.IsAutoRegisterVM() {
 			cmd = append(cmd, "--autoregister")
 		}
 		if !ctx.Environment().(*kube.Environment).Settings().LoadBalancerSupported {

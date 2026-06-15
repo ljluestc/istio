@@ -29,6 +29,7 @@ import (
 	"istio.io/api/annotation"
 	clientnetworking "istio.io/client-go/pkg/apis/networking/v1"
 	"istio.io/istio/pilot/pkg/features"
+	"istio.io/istio/pkg/ptr"
 	"istio.io/istio/pkg/test/framework"
 	"istio.io/istio/pkg/test/framework/components/echo"
 	"istio.io/istio/pkg/test/framework/components/echo/check"
@@ -113,7 +114,7 @@ func TestVMRegistrationLifecycle(t *testing.T) {
 					Service:        "auto-vm",
 					Ports:          ports.All(),
 					DeployAsVM:     true,
-					AutoRegisterVM: true,
+					AutoRegisterVM: ptr.Of(true),
 				}).BuildOrFail(t)
 			t.NewSubTest("initial registration").Run(func(t framework.TestContext) {
 				retry.UntilSuccessOrFail(t, func() error {

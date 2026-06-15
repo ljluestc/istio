@@ -25,6 +25,7 @@ import (
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"istio.io/istio/pkg/config/protocol"
+	"istio.io/istio/pkg/ptr"
 	"istio.io/istio/pkg/test/framework"
 	"istio.io/istio/pkg/test/framework/components/crd"
 	"istio.io/istio/pkg/test/framework/components/echo"
@@ -101,10 +102,11 @@ func TestMultiRevision(t *testing.T) {
 					},
 				}).
 				WithConfig(echo.Config{
-					Service:    "vm",
-					Namespace:  canary,
-					DeployAsVM: true,
-					Ports:      []echo.Port{},
+					Service:        "vm",
+					Namespace:      canary,
+					DeployAsVM:     true,
+					AutoRegisterVM: ptr.Of(false),
+					Ports:          []echo.Port{},
 				}).
 				BuildOrFail(t)
 
