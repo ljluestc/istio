@@ -123,7 +123,7 @@ func (e *envoy) UpdateConfig(config []byte) error {
 	return os.WriteFile(e.ConfigPath, config, 0o666)
 }
 
-func (e *envoy) args(fname string, overrideFname string) []string {
+func (e *envoy) args(fname string, overrideFname string, overrideJSON string) []string {
 	proxyLocalAddressType := "v4"
 	if network.AllIPv6(e.NodeIPs) {
 		proxyLocalAddressType = "v6"
@@ -163,6 +163,11 @@ func (e *envoy) args(fname string, overrideFname string) []string {
 			// Despite the name Envoy also accepts JSON string
 			startupArgs = append(startupArgs, "--config-yaml", s)
 		}
+	} else if overrideJSON != "" {
+		// Inline JSON override: passed directly without reading a file.
+		// This allows global bootstrap customisation via
+		// meshConfig.defaultConfig.proxyMetadata (issue #60651).
+		startupArgs = append(startupArgs, "--config-yaml", overrideJSON)
 	}
 
 	if e.Concurrency > 0 {
@@ -199,12 +204,23 @@ func readBootstrapToJSON(fname string) (string, error) {
 
 var (
 	istioBootstrapOverrideVar = env.Register("ISTIO_BOOTSTRAP_OVERRIDE", "", "")
-	enableEnvoyCoreDump       = env.Register("ISTIO_ENVOY_ENABLE_CORE_DUMP", false, "").Get()
+	// istioBootstrapOverrideJSONVar accepts an inline JSON string that is passed
+	// directly as --config-yaml to Envoy (same proto-merge semantics as
+	// ISTIO_BOOTSTRAP_OVERRIDE).  This enables global bootstrap overrides via
+	// meshConfig.defaultConfig.proxyMetadata without requiring per-namespace
+	// ConfigMaps.  When ISTIO_BOOTSTRAP_OVERRIDE (file path) is also set, the
+	// file-based override takes precedence.
+	istioBootstrapOverrideJSONVar = env.Register("ISTIO_BOOTSTRAP_OVERRIDE_JSON", "",
+		"Inline JSON bootstrap override passed directly as --config-yaml to Envoy. "+
+			"Enables global bootstrap overrides via meshConfig.defaultConfig.proxyMetadata "+
+			"without requiring per-namespace ConfigMaps. "+
+			"ISTIO_BOOTSTRAP_OVERRIDE (file path) takes precedence when both are set.")
+	enableEnvoyCoreDump = env.Register("ISTIO_ENVOY_ENABLE_CORE_DUMP", false, "").Get()
 )
 
 func (e *envoy) Run(abort <-chan error) error {
 	// spin up a new Envoy process
-	args := e.args(e.ConfigPath, istioBootstrapOverrideVar.Get())
+	args := e.args(e.ConfigPath, istioBootstrapOverrideVar.Get(), istioBootstrapOverrideJSONVar.Get())
 	log.Infof("Envoy command: %v", args)
 
 	/* #nosec */

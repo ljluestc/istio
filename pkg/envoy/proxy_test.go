@@ -143,9 +143,69 @@ func TestEnvoyArgs(t *testing.T) {
 				t.Errorf("unexpected struct got\n%v\nwant\n%v", testProxy, test)
 			}
 
-			got := test.args("test.json", "testdata/bootstrap.json")
+			got := test.args("test.json", "testdata/bootstrap.json", "")
 			if d := cmp.Diff(got, tc.want); d != "" {
 				t.Errorf("envoyArgs() => (-want +got):\n%s", d)
+			}
+		})
+	}
+}
+
+func TestEnvoyArgsBootstrapOverrideJSON(t *testing.T) {
+	proxyConfig := (*model.NodeMetaProxyConfig)(mesh.DefaultProxyConfig())
+	proxyConfig.Concurrency = &wrapperspb.Int32Value{Value: 1}
+
+	base := ProxyConfig{
+		LogLevel:      "info",
+		NodeIPs:       []string{"10.0.0.1"},
+		BinaryPath:    proxyConfig.BinaryPath,
+		ConfigPath:    proxyConfig.ConfigPath,
+		ConfigCleanup: true,
+		AdminPort:     proxyConfig.ProxyAdminPort,
+		DrainDuration: proxyConfig.DrainDuration,
+		Concurrency:   1,
+	}
+
+	inlineJSON := `{"admin":{"allow_paths":[{"prefix":"/healthz/ready"}]}}`
+
+	tests := []struct {
+		name         string
+		overrideFname string
+		overrideJSON  string
+		wantConfigYAML string // empty means expect no --config-yaml
+	}{
+		{
+			name:           "json override used when no file set",
+			overrideJSON:   inlineJSON,
+			wantConfigYAML: inlineJSON,
+		},
+		{
+			name:           "file override takes precedence over json",
+			overrideFname:  "testdata/bootstrap.json",
+			overrideJSON:   inlineJSON,
+			wantConfigYAML: `{"key":"value"}`, // content of testdata/bootstrap.json
+		},
+		{
+			name:           "neither set produces no --config-yaml",
+			wantConfigYAML: "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := &envoy{ProxyConfig: base, extraArgs: []string{"-l", "info"}}
+			got := e.args("test.json", tc.overrideFname, tc.overrideJSON)
+
+			// Find --config-yaml value in the args slice.
+			var gotConfigYAML string
+			for i, a := range got {
+				if a == "--config-yaml" && i+1 < len(got) {
+					gotConfigYAML = got[i+1]
+					break
+				}
+			}
+			if gotConfigYAML != tc.wantConfigYAML {
+				t.Errorf("--config-yaml: got %q, want %q", gotConfigYAML, tc.wantConfigYAML)
 			}
 		})
 	}

@@ -162,7 +162,7 @@ spec:
     {{- end }}
     {{- range $key, $value := .ProxyConfig.ProxyMetadata }}
     - name: {{ $key }}
-      value: "{{ $value }}"
+      value: {{ $value | toJson }}
     {{- end }}
     {{with .Values.global.imagePullPolicy }}imagePullPolicy: "{{.}}"{{end}}
     readinessProbe:
