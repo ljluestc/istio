@@ -1988,6 +1988,68 @@ func firstValue[T, U any](val T, _ U) T {
 	return val
 }
 
+func TestCreateRewriteFilterFullPathRegexMatchUsesRouteRegex(t *testing.T) {
+	pathType := k8s.PathMatchRegularExpression
+	rewriteFilter := &k8s.HTTPURLRewriteFilter{
+		Path: &k8s.HTTPPathModifier{
+			Type:            k8s.FullPathHTTPPathModifier,
+			ReplaceFullPath: ptr.Of("/api/$1"),
+		},
+	}
+	matches := []k8s.HTTPRouteMatch{
+		{
+			Path: &k8s.HTTPPathMatch{
+				Type:  &pathType,
+				Value: ptr.Of("(?i)/(.*)"),
+			},
+		},
+	}
+
+	got := createRewriteFilter(rewriteFilter, matches)
+	want := &istio.HTTPRewrite{
+		UriRegexRewrite: &istio.RegexRewrite{
+			Match:   "(?i)/(.*)",
+			Rewrite: `/api/\1`,
+		},
+	}
+
+	assert.Equal(t, got, want)
+}
+
+func TestCreateRewriteFilterFullPathRegexMatchFallback(t *testing.T) {
+	pathType := k8s.PathMatchRegularExpression
+	rewriteFilter := &k8s.HTTPURLRewriteFilter{
+		Path: &k8s.HTTPPathModifier{
+			Type:            k8s.FullPathHTTPPathModifier,
+			ReplaceFullPath: ptr.Of("/api/$1"),
+		},
+	}
+	matches := []k8s.HTTPRouteMatch{
+		{
+			Path: &k8s.HTTPPathMatch{
+				Type:  &pathType,
+				Value: ptr.Of("(?i)/(.*)"),
+			},
+		},
+		{
+			Path: &k8s.HTTPPathMatch{
+				Type:  &pathType,
+				Value: ptr.Of("(?i)/v2/(.*)"),
+			},
+		},
+	}
+
+	got := createRewriteFilter(rewriteFilter, matches)
+	want := &istio.HTTPRewrite{
+		UriRegexRewrite: &istio.RegexRewrite{
+			Match:   "/.*",
+			Rewrite: `/api/\1`,
+		},
+	}
+
+	assert.Equal(t, got, want)
+}
+
 // TestListenerSetStatusTruncatesOnListenerRemoval is a regression test for a bug where a
 // listener removed from a ListenerSet's spec left an orphaned entry in status.Listeners
 // forever. ListenerSetCollection threads the previous status forward (to preserve

@@ -172,7 +172,7 @@ func convertHTTPRoute(ctx RouteContext, r k8s.HTTPRouteRule,
 				vs.Mirrors = append(vs.Mirrors, mirror)
 			}
 		case k8s.HTTPRouteFilterURLRewrite:
-			vs.Rewrite = createRewriteFilter(filter.URLRewrite)
+			vs.Rewrite = createRewriteFilter(filter.URLRewrite, r.Matches)
 		case k8s.HTTPRouteFilterCORS:
 			vs.CorsPolicy = createCorsFilter(filter.CORS)
 		default:
@@ -1255,7 +1255,7 @@ func createMirrorFilter(ctx RouteContext, filter *k8s.HTTPRequestMirrorFilter, n
 	return &istio.HTTPMirrorPolicy{Destination: dst, Percentage: percent}, nil
 }
 
-func createRewriteFilter(filter *k8s.HTTPURLRewriteFilter) *istio.HTTPRewrite {
+func createRewriteFilter(filter *k8s.HTTPURLRewriteFilter, matches []k8s.HTTPRouteMatch) *istio.HTTPRewrite {
 	if filter == nil {
 		return nil
 	}
@@ -1269,9 +1269,20 @@ func createRewriteFilter(filter *k8s.HTTPURLRewriteFilter) *istio.HTTPRewrite {
 				rewrite.Uri = "/"
 			}
 		case k8s.FullPathHTTPPathModifier:
+			matchRegex := "/.*"
+			if len(matches) == 1 {
+				match := matches[0]
+				if match.Path != nil &&
+					match.Path.Type != nil &&
+					*match.Path.Type == k8s.PathMatchRegularExpression &&
+					match.Path.Value != nil &&
+					*match.Path.Value != "" {
+					matchRegex = *match.Path.Value
+				}
+			}
 			rewrite.UriRegexRewrite = &istio.RegexRewrite{
-				Match:   "/.*",
-				Rewrite: *filter.Path.ReplaceFullPath,
+				Match:   matchRegex,
+				Rewrite: normalizeRegexRewriteSubstitution(*filter.Path.ReplaceFullPath),
 			}
 		}
 	}
@@ -1283,6 +1294,14 @@ func createRewriteFilter(filter *k8s.HTTPURLRewriteFilter) *istio.HTTPRewrite {
 		return nil
 	}
 	return rewrite
+}
+
+var gatewayRegexRewriteCapturePattern = regexp.MustCompile(`\$(\d+)`)
+
+func normalizeRegexRewriteSubstitution(rewrite string) string {
+	return gatewayRegexRewriteCapturePattern.ReplaceAllStringFunc(rewrite, func(match string) string {
+		return `\` + strings.TrimPrefix(match, "$")
+	})
 }
 
 func createCorsFilter(filter *k8s.HTTPCORSFilter) *istio.CorsPolicy {
