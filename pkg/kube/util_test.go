@@ -330,6 +330,35 @@ func TestSanitizeKubeConfig(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "eks auth provider",
+			config: api.Config{
+				AuthInfos: map[string]*api.AuthInfo{
+					"default": {
+						AuthProvider: &api.AuthProviderConfig{Name: "eks", Config: map[string]string{"cluster-name": "c1"}},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name:      "eks auth provider allowlist",
+			allowlist: sets.New("eks"),
+			config: api.Config{
+				AuthInfos: map[string]*api.AuthInfo{
+					"default": {
+						AuthProvider: &api.AuthProviderConfig{Name: "eks", Config: map[string]string{"cluster-name": "c1"}},
+					},
+				},
+			},
+			want: api.Config{
+				AuthInfos: map[string]*api.AuthInfo{
+					"default": {
+						AuthProvider: &api.AuthProviderConfig{Name: "eks", Config: map[string]string{"cluster-name": "c1"}},
+					},
+				},
+			},
+		},
+		{
 			name:      "exec allowlist",
 			allowlist: sets.New("exec"),
 			config: api.Config{

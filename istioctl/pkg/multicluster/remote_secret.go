@@ -44,6 +44,7 @@ import (
 	"istio.io/istio/pkg/config/constants"
 	"istio.io/istio/pkg/config/labels"
 	"istio.io/istio/pkg/kube"
+	"istio.io/istio/pkg/kube/eks"
 	"istio.io/istio/pkg/kube/multicluster"
 	"istio.io/istio/pkg/log"
 )
@@ -104,6 +105,12 @@ func NewCreateRemoteSecretCommand(ctx cli.Context) *cobra.Command {
 
   # Create a secret access a remote cluster with an auth plugin
   istioctl --kubeconfig=c0.yaml create-remote-secret --name c0 --auth-type=plugin --auth-plugin-name=gcp \
+    | kubectl --kubeconfig=c1.yaml apply -f -
+
+  # Create a secret to access an EKS cluster with istiod's AWS IAM identity (IRSA or EKS Pod Identity)
+  # instead of a long-lived service account token. Requires PILOT_INSECURE_MULTICLUSTER_KUBECONFIG_OPTIONS=eks
+  # on istiod in c1, and an EKS access entry granting that IAM identity read access to c0.
+  istioctl --kubeconfig=c0.yaml create-remote-secret --name c0 --auth-type=aws-iam --aws-cluster-name=c0 \
     | kubectl --kubeconfig=c1.yaml apply -f -`,
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, args []string) error {
@@ -538,6 +545,9 @@ const (
 	// Use a custom authentication plugin for the remote kubernetes cluster.
 	RemoteSecretAuthTypePlugin RemoteSecretAuthType = "plugin"
 
+	// Use AWS IAM credentials of istiod to authenticate to a remote EKS cluster.
+	RemoteSecretAuthTypeAWSIAM RemoteSecretAuthType = "aws-iam"
+
 	// Secret generated from remote cluster
 	SecretTypeRemote SecretType = "remote"
 
@@ -565,6 +575,11 @@ type RemoteSecretOptions struct {
 	// Authenticator plugin configuration
 	AuthPluginName   string
 	AuthPluginConfig map[string]string
+
+	// AWS IAM authentication configuration, used with --auth-type=aws-iam.
+	AWSClusterName string
+	AWSRegion      string
+	AWSRoleARN     string
 
 	// Type of the generated secret
 	Type SecretType
@@ -605,7 +620,7 @@ func (o *RemoteSecretOptions) addFlags(flagset *pflag.FlagSet) {
 	flagset.StringVar(&o.SecretName, "secret-name", "",
 		"The name of the specific secret to use from the service-account. Needed when there are multiple secrets in the service account.")
 	var supportedAuthType []string
-	for _, at := range []RemoteSecretAuthType{RemoteSecretAuthTypeBearerToken, RemoteSecretAuthTypePlugin} {
+	for _, at := range []RemoteSecretAuthType{RemoteSecretAuthTypeBearerToken, RemoteSecretAuthTypePlugin, RemoteSecretAuthTypeAWSIAM} {
 		supportedAuthType = append(supportedAuthType, string(at))
 	}
 	var supportedSecretType []string
@@ -618,9 +633,17 @@ func (o *RemoteSecretOptions) addFlags(flagset *pflag.FlagSet) {
 	flagset.StringVar(&o.AuthPluginName, "auth-plugin-name", o.AuthPluginName,
 		fmt.Sprintf("Authenticator plug-in name. --auth-type=%v must be set with this option",
 			RemoteSecretAuthTypePlugin))
-	flagset.StringToString("auth-plugin-config", o.AuthPluginConfig,
+	flagset.StringToStringVar(&o.AuthPluginConfig, "auth-plugin-config", o.AuthPluginConfig,
 		fmt.Sprintf("Authenticator plug-in configuration. --auth-type=%v must be set with this option",
 			RemoteSecretAuthTypePlugin))
+	flagset.StringVar(&o.AWSClusterName, "aws-cluster-name", "",
+		fmt.Sprintf("Name of the EKS cluster. Required with --auth-type=%v", RemoteSecretAuthTypeAWSIAM))
+	flagset.StringVar(&o.AWSRegion, "aws-region", "",
+		fmt.Sprintf("AWS region of the EKS cluster. Derived from the server address if unset. Used with --auth-type=%v",
+			RemoteSecretAuthTypeAWSIAM))
+	flagset.StringVar(&o.AWSRoleARN, "aws-role-arn", "",
+		fmt.Sprintf("Optional IAM role for istiod to assume before authenticating to the EKS cluster. Used with --auth-type=%v",
+			RemoteSecretAuthTypeAWSIAM))
 	flagset.Var(&o.Type, "type",
 		fmt.Sprintf("Type of the generated secret. supported values = %v", supportedSecretType))
 	flagset.StringVarP(&o.ManifestsPath, "manifests", "d", "", util.ManifestsFlagHelpStr)
@@ -633,6 +656,13 @@ func (o *RemoteSecretOptions) prepare(ctx cli.Context) error {
 		if !labels.IsDNS1123Label(o.ClusterName) {
 			return fmt.Errorf("%v is not a valid DNS 1123 label", o.ClusterName)
 		}
+	}
+	if o.AuthType == RemoteSecretAuthTypeAWSIAM {
+		if o.AWSClusterName == "" {
+			return fmt.Errorf("--aws-cluster-name is required with --auth-type=%v", RemoteSecretAuthTypeAWSIAM)
+		}
+	} else if o.AWSClusterName != "" || o.AWSRegion != "" || o.AWSRoleARN != "" {
+		return fmt.Errorf("--aws-* flags require --auth-type=%v", RemoteSecretAuthTypeAWSIAM)
 	}
 	return nil
 }
@@ -664,20 +694,19 @@ func createRemoteSecret(opt RemoteSecretOptions, client kube.CLIClient) (*v1.Sec
 	default:
 		return nil, nil, fmt.Errorf("unsupported type: %v", opt.Type)
 	}
+
+	if opt.AuthType == RemoteSecretAuthTypeAWSIAM {
+		return createRemoteSecretFromAWSIAM(opt, client, secretName)
+	}
+
 	tokenSecret, err := getServiceAccountSecret(client, opt)
 	if err != nil {
 		return nil, nil, fmt.Errorf("could not get access token to read resources from local kube-apiserver: %v", err)
 	}
 
-	var server string
-	var warn Warning
-	if opt.ServerOverride != "" {
-		server = opt.ServerOverride
-	} else {
-		server, warn, err = getServerFromKubeconfig(client)
-		if err != nil {
-			return nil, warn, err
-		}
+	server, warn, err := remoteServer(opt, client)
+	if err != nil {
+		return nil, warn, err
 	}
 
 	var remoteSecret *v1.Secret
@@ -701,6 +730,62 @@ func createRemoteSecret(opt RemoteSecretOptions, client kube.CLIClient) (*v1.Sec
 	remoteSecret.Namespace = opt.Namespace
 	return remoteSecret, warn, nil
 }
+
+func remoteServer(opt RemoteSecretOptions, client kube.CLIClient) (string, Warning, error) {
+	if opt.ServerOverride != "" {
+		return opt.ServerOverride, nil, nil
+	}
+	return getServerFromKubeconfig(client)
+}
+
+// createRemoteSecretFromAWSIAM creates a remote secret that authenticates with the eks auth provider.
+// No service account or token is created in the remote cluster; access is granted to istiod's IAM
+// identity through EKS access entries (or the aws-auth ConfigMap) instead.
+func createRemoteSecretFromAWSIAM(opt RemoteSecretOptions, client kube.CLIClient, secretName string) (*v1.Secret, Warning, error) {
+	server, warn, err := remoteServer(opt, client)
+	if err != nil {
+		return nil, warn, err
+	}
+	caData, err := getRootCAData(client, opt.Namespace)
+	if err != nil {
+		return nil, warn, err
+	}
+	authProviderConfig := &api.AuthProviderConfig{
+		Name:   eks.AuthProviderName,
+		Config: map[string]string{eks.ConfigClusterName: opt.AWSClusterName},
+	}
+	if opt.AWSRegion != "" {
+		authProviderConfig.Config[eks.ConfigRegion] = opt.AWSRegion
+	}
+	if opt.AWSRoleARN != "" {
+		authProviderConfig.Config[eks.ConfigRoleARN] = opt.AWSRoleARN
+	}
+	kubeconfig := createPluginKubeconfig(caData, opt.ClusterName, server, opt.TLSServerName, authProviderConfig)
+	if err := clientcmd.Validate(*kubeconfig); err != nil {
+		return nil, warn, fmt.Errorf("invalid kubeconfig: %v", err)
+	}
+	remoteSecret, err := createRemoteServiceAccountSecret(kubeconfig, opt.ClusterName, secretName)
+	if err != nil {
+		return nil, warn, err
+	}
+	remoteSecret.Namespace = opt.Namespace
+	return remoteSecret, warn, nil
+}
+
+// getRootCAData reads the cluster CA bundle published to every namespace by kube-controller-manager.
+func getRootCAData(client kube.CLIClient, namespace string) ([]byte, error) {
+	cm, err := client.Kube().CoreV1().ConfigMaps(namespace).Get(context.TODO(), rootCAConfigMapName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("could not read cluster CA from ConfigMap %s/%s: %v", namespace, rootCAConfigMapName, err)
+	}
+	ca, ok := cm.Data[v1.ServiceAccountRootCAKey]
+	if !ok || ca == "" {
+		return nil, fmt.Errorf("no %q data found in ConfigMap %s/%s", v1.ServiceAccountRootCAKey, namespace, rootCAConfigMapName)
+	}
+	return []byte(ca), nil
+}
+
+const rootCAConfigMapName = "kube-root-ca.crt"
 
 // CreateRemoteSecret creates a remote secret with credentials of the specified service account.
 // This is useful for providing a cluster access to a remote apiserver.

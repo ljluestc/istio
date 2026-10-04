@@ -39,6 +39,7 @@ import (
 	"istio.io/api/label"
 	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pkg/config/schema/kubetypes"
+	_ "istio.io/istio/pkg/kube/eks" // register the eks auth provider for multicluster remote secrets
 	"istio.io/istio/pkg/util/sets"
 	istioversion "istio.io/istio/pkg/version"
 )

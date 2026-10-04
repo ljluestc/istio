@@ -250,7 +250,7 @@ var (
 			"PILOT_INSECURE_MULTICLUSTER_KUBECONFIG_OPTIONS",
 			"",
 			"Comma separated list of potentially insecure kubeconfig authentication options that are allowed for multicluster authentication."+
-				"Support values: all authProviders (`gcp`, `azure`, `exec`, `openstack`), "+
+				"Support values: all authProviders (`gcp`, `azure`, `exec`, `openstack`, `eks`), "+
 				"`clientKey`, `clientCertificate`, `tokenFile`, and `exec`.").Get()
 		return sets.New(strings.Split(v, ",")...)
 	}()
